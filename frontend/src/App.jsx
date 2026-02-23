@@ -117,6 +117,23 @@ function App() {
     }
   };
 
+  const handleModeSwitch = (newMode) => {
+    if (calcMode === newMode) return;
+
+    const area = Math.PI * Math.pow(pelletDiameter / 20, 2);
+    setComponents(prev => prev.map(c => {
+      if (newMode === 'battery') {
+        const ad = (c.mass || 0) / area;
+        return { ...c, area_density: parseFloat(ad.toFixed(4)) };
+      } else {
+        const m = (c.area_density || 0) * area;
+        return { ...c, mass: parseFloat(m.toFixed(4)) };
+      }
+    }));
+
+    setCalcMode(newMode);
+  };
+
   const handleCalculate = async () => {
     setIsCalculating(true);
     setError(null);
@@ -199,14 +216,14 @@ function App() {
                 <div className="toggle-group" style={{ display: 'flex', background: 'var(--bg-color)', borderRadius: '8px', padding: '4px', gap: '4px', width: '100%' }}>
                   <button
                     className={clsx('toggle-btn', { active: calcMode === 'pellet' })}
-                    onClick={() => setCalcMode('pellet')}
+                    onClick={() => handleModeSwitch('pellet')}
                     style={{ flex: 1, padding: '6px 12px', border: 'none', borderRadius: '6px', cursor: 'pointer', background: calcMode === 'pellet' ? 'var(--primary)' : 'transparent', color: calcMode === 'pellet' ? '#fff' : 'inherit', fontSize: '0.85rem', fontWeight: 600, transition: 'all 0.2s' }}
                   >
                     Prepare Pellet
                   </button>
                   <button
                     className={clsx('toggle-btn', { active: calcMode === 'battery' })}
-                    onClick={() => setCalcMode('battery')}
+                    onClick={() => handleModeSwitch('battery')}
                     style={{ flex: 1, padding: '6px 12px', border: 'none', borderRadius: '6px', cursor: 'pointer', background: calcMode === 'battery' ? 'var(--primary)' : 'transparent', color: calcMode === 'battery' ? '#fff' : 'inherit', fontSize: '0.85rem', fontWeight: 600, transition: 'all 0.2s' }}
                   >
                     Area Density
