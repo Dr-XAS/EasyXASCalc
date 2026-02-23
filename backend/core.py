@@ -196,7 +196,9 @@ class MaterialAbs:
 
         if show_label:
             fig.update_layout(legend=dict(
-                x=1.1, y=1,
+                orientation="h",
+                x=0.5, y=1.05,
+                xanchor="center", yanchor="bottom",
                 bgcolor='rgba(255, 255, 255, 0.7)',
             ))
         
