@@ -3,6 +3,7 @@ from core import MaterialAbs
 import xraylib as xrl
 import json
 import logging
+import re
 
 import os
 try:
@@ -108,6 +109,42 @@ def get_elements():
         except:
             pass
     return jsonify(elements)
+
+@app.route('/api/auto_edges', methods=['POST'])
+def auto_edges():
+    try:
+        data = request.json
+        compound = data.get('compound', '')
+        min_e = float(data.get('min_energy', 4.0))
+        max_e = float(data.get('max_energy', 30.0))
+        
+        # Regex to extract all element symbols like Li, Ni, Mn, Co, O
+        elements = list(set(re.findall(r'[A-Z][a-z]*', compound)))
+        
+        edges = []
+        for el in elements:
+            try:
+                Z = xrl.SymbolToAtomicNumber(el)
+                for edge_name, edge_val in SHELL_MAP.items():
+                    try:
+                        energy_kev = xrl.EdgeEnergy(Z, edge_val)
+                        if min_e <= energy_kev <= max_e:
+                            edges.append({
+                                "element": el,
+                                "type": edge_name,
+                                "energy": energy_kev
+                            })
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+                
+        # Sort edges by descending energy or ascending energy
+        edges = sorted(edges, key=lambda x: x['energy'])
+        return jsonify({"edges": edges})
+    except Exception as e:
+        logging.error(f"Error auto_edges: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/likes', methods=['GET'])
 def get_likes():
