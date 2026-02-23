@@ -1,29 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import Plot from 'react-plotly.js';
 import axios from 'axios';
-import { Plus, Trash2, Calculator, FlaskConical, Layers, Activity, Info, ThumbsUp } from 'lucide-react';
+import { Plus, Trash2, Calculator, FlaskConical, Layers, Activity, Info, ThumbsUp, SlidersHorizontal, Github, Twitter, Mail, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
 import 'katex/dist/katex.min.css';
 import { BlockMath } from 'react-katex';
 import './App.css';
+import logo from './assets/logo/logo.png';
 
 // Utility for generating unique IDs
 const uid = () => Math.random().toString(36).substr(2, 9);
 
 function App() {
   // State
-  const [sample, setSample] = useState({
-    compound: 'LiNi0.5Mn0.25Co0.25O2',
-    area_density: 60,
-    ratio: 0.2
-  });
+  const [calcMode, setCalcMode] = useState('pellet');
+  const [pelletDiameter, setPelletDiameter] = useState(7);
 
-  const [matrices, setMatrices] = useState([
-    { id: uid(), compound: 'BN', ratio: 0.8 }
-  ]);
+  // Original single-sample + matrices are removed. We only keep a list of generic components (now labeled as "Samples").
   const [components, setComponents] = useState([
-    { id: uid(), compound: 'Al', area_density: 10 }
+    { id: uid(), compound: 'LiNi0.5Mn0.25Co0.25O2', area_density: 60, mass: 5 },
+    { id: uid(), compound: 'BN', area_density: 10, mass: 50 }
   ]);
   const [isCalculating, setIsCalculating] = useState(false);
   const [results, setResults] = useState([]);
@@ -34,9 +31,13 @@ function App() {
 
   // Edge selection
   const [edges, setEdges] = useState([
-    { id: uid(), type: 'K', element: 'Ni' },
-    { id: uid(), type: 'K', element: 'Co' }
+    { id: uid(), type: 'K', element: 'Mn' },
+    { id: uid(), type: 'K', element: 'Co' },
+    { id: uid(), type: 'K', element: 'Ni' }
   ]);
+  const [autoEdgeMin, setAutoEdgeMin] = useState(4);
+  const [autoEdgeMax, setAutoEdgeMax] = useState(30);
+  const [isAutoFetching, setIsAutoFetching] = useState(false);
 
   const [elementsList, setElementsList] = useState([]);
 
@@ -47,27 +48,8 @@ function App() {
       .catch(err => console.error("Failed to fetch elements", err));
   }, []);
 
-  // Update matrices ratios when sample ratio changes or matrices list changes
-  useEffect(() => {
-    const remainingRatio = 1 - sample.ratio;
-    if (matrices.length > 0) {
-      const perMatrix = remainingRatio / matrices.length;
-      setMatrices(prev => prev.map(m => ({ ...m, ratio: perMatrix })));
-    }
-  }, [sample.ratio, matrices.length]);
-
-  const addMatrix = () => {
-    if (matrices.length < 1) {
-      setMatrices(prev => [...prev, { id: uid(), compound: 'C', ratio: 0 }]);
-    }
-  };
-
-  const removeMatrix = (id) => {
-    setMatrices(prev => prev.filter(m => m.id !== id));
-  };
-
   const addComponent = () => {
-    setComponents(prev => [...prev, { id: uid(), compound: 'Al', area_density: 10 }]);
+    setComponents(prev => [...prev, { id: uid(), compound: 'Al', area_density: 10, mass: 5 }]);
   };
 
   const removeComponent = (id) => {
@@ -100,35 +82,62 @@ function App() {
       .catch(err => console.error('Failed to fetch likes:', err));
   }, []);
 
+  const handleAutoEdges = async () => {
+    if (components.length === 0) return;
+    setIsAutoFetching(true);
+    try {
+      const resp = await axios.post('/api/auto_edges', {
+        compound: components[0].compound,
+        min_energy: autoEdgeMin,
+        max_energy: autoEdgeMax
+      });
+      if (resp.data.edges && resp.data.edges.length > 0) {
+        const newEdges = resp.data.edges.map(e => ({
+          id: uid(),
+          type: e.type,
+          element: e.element
+        }));
+        setEdges(newEdges);
+      } else {
+        alert("No edges found in this energy range for the first sample layer.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to auto-fetch edges.");
+    } finally {
+      setIsAutoFetching(false);
+    }
+  };
+
+  const handleClearAll = () => {
+    if (window.confirm("Are you sure you want to clear all samples and measurement edges?")) {
+      setComponents([]);
+      setEdges([]);
+      setResults([]);
+    }
+  };
+
   const handleCalculate = async () => {
     setIsCalculating(true);
     setError(null);
     setResults([]);
 
     try {
-      // Prepare payload
-      // 1. Sample
-      // density = input_density * ratio / 1000 (convert mg to g)
-      const samplePayload = {
-        compound: sample.compound,
-        area_density: (sample.area_density / 1000) * sample.ratio
+      const isPellet = calcMode === 'pellet';
+      const area = isPellet ? Math.PI * Math.pow(pelletDiameter / 20, 2) : 1;
+
+      const getAreaDensity = (item) => {
+        if (isPellet) {
+          return (item.mass || 0) / area;
+        }
+        return item.area_density || 0;
       };
 
-      // 2. Matrices
-      // density = sample_input_density * matrix_ratio / 1000
-      const matricesPayload = matrices.map(m => ({
-        compound: m.compound,
-        area_density: (sample.area_density / 1000) * m.ratio
-      }));
-
-      // 3. Components
-      // density = input_density / 1000
-      const componentsPayload = components.map(c => ({
+      // 1. Components (now representing the entire sample stack)
+      const allCompounds = components.map(c => ({
         compound: c.compound,
-        area_density: c.area_density / 1000
+        area_density: getAreaDensity(c) / 1000
       }));
-
-      const allCompounds = [samplePayload, ...matricesPayload, ...componentsPayload];
 
       const edgesPayload = edges.map(e => ({
         element: e.element,
@@ -159,8 +168,9 @@ function App() {
     <div className="app-container">
       <header className="header">
         <div className="logo">
-          <FlaskConical className="icon" />
-          <h1>EasyXASCalc <span className="beta">Web</span></h1>
+          <img src={logo} alt="EasyXASCalc Logo" style={{ height: '32px' }} />
+          <div style={{ height: '24px', width: '2px', background: 'var(--border-color)', borderRadius: '1px', margin: '0 4px' }} />
+          <h1>EasyXASCalc</h1>
         </div>
       </header>
 
@@ -176,13 +186,197 @@ function App() {
               {isCalculating ? 'Calculating...' : <><Calculator size={18} /> Calculate Absorption</>}
             </button>
 
+            {/* Mode Switcher */}
+            <section className="card highlight-card">
+              <div className="section-header" style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                <div style={{ position: 'absolute', left: 0, display: 'flex', alignItems: 'center' }}>
+                  <SlidersHorizontal size={18} />
+                </div>
+                <h2 style={{ margin: 0 }}>Calculation Mode</h2>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: calcMode === 'pellet' ? '1rem' : '0' }}>
+                <div className="toggle-group" style={{ display: 'flex', background: 'var(--bg-color)', borderRadius: '8px', padding: '4px', gap: '4px', width: '100%' }}>
+                  <button
+                    className={clsx('toggle-btn', { active: calcMode === 'pellet' })}
+                    onClick={() => setCalcMode('pellet')}
+                    style={{ flex: 1, padding: '6px 12px', border: 'none', borderRadius: '6px', cursor: 'pointer', background: calcMode === 'pellet' ? 'var(--primary)' : 'transparent', color: calcMode === 'pellet' ? '#fff' : 'inherit', fontSize: '0.85rem', fontWeight: 600, transition: 'all 0.2s' }}
+                  >
+                    Prepare Pellet
+                  </button>
+                  <button
+                    className={clsx('toggle-btn', { active: calcMode === 'battery' })}
+                    onClick={() => setCalcMode('battery')}
+                    style={{ flex: 1, padding: '6px 12px', border: 'none', borderRadius: '6px', cursor: 'pointer', background: calcMode === 'battery' ? 'var(--primary)' : 'transparent', color: calcMode === 'battery' ? '#fff' : 'inherit', fontSize: '0.85rem', fontWeight: 600, transition: 'all 0.2s' }}
+                  >
+                    Area Density
+                  </button>
+                </div>
+              </div>
+
+              <AnimatePresence>
+                {calcMode === 'pellet' && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    style={{ overflow: 'hidden' }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', paddingTop: '0.5rem', borderTop: '1px dashed var(--border-color)', fontSize: '0.85rem' }}>
+                      <span className="label" style={{ marginBottom: 0, fontWeight: 600 }}>Diameter:</span>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-color)', padding: '8px', borderRadius: '6px', flex: 1 }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <button
+                            onClick={() => setPelletDiameter(7)}
+                            style={{ border: 'none', background: pelletDiameter === 7 ? 'rgba(148, 120, 172, 0.15)' : 'transparent', color: pelletDiameter === 7 ? 'var(--primary)' : 'inherit', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: pelletDiameter === 7 ? 600 : 400, transition: 'all 0.2s', width: '100%', justifyContent: 'flex-start' }}
+                          >
+                            <span style={{ fontSize: '0.75rem', width: '20px', textAlign: 'center' }}>⚪</span> 7 mm
+                          </button>
+                          <button
+                            onClick={() => setPelletDiameter(13)}
+                            style={{ border: 'none', background: pelletDiameter === 13 ? 'rgba(148, 120, 172, 0.15)' : 'transparent', color: pelletDiameter === 13 ? 'var(--primary)' : 'inherit', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: pelletDiameter === 13 ? 600 : 400, transition: 'all 0.2s', width: '100%', justifyContent: 'flex-start' }}
+                          >
+                            <span style={{ fontSize: '1.2rem', lineHeight: 1, width: '20px', textAlign: 'center' }}>⚪</span> 13 mm
+                          </button>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingRight: '8px' }}>
+                          <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Custom:</span>
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={pelletDiameter === '' ? '' : pelletDiameter}
+                            onChange={e => {
+                              const v = e.target.value;
+                              setPelletDiameter(v === '' ? '' : parseFloat(v));
+                            }}
+                            style={{ width: '60px', padding: '6px', fontSize: '0.85rem', outline: 'none', border: '1px solid var(--border-color)', borderRadius: '4px', background: 'var(--card-bg)' }}
+                          />
+                          <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>mm</span>
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </section>
+
+            {/* Sample Stack Section (Formerly Components) */}
+            <section className="card">
+              <div className="section-header">
+                <Layers size={18} />
+                <h2>Sample</h2>
+                <button className="icon-btn" onClick={addComponent} title="Add Layer"><Plus size={16} /></button>
+              </div>
+
+              <AnimatePresence>
+                {components.map((c, idx) => (
+                  <motion.div
+                    key={c.id}
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="row item-row"
+                  >
+                    <div style={{ flex: 1, display: 'grid', gap: '0.8rem' }}>
+                      <div>
+                        <label className="label">Formula</label>
+                        <input
+                          type="text"
+                          value={c.compound}
+                          onChange={e => {
+                            const newC = [...components];
+                            newC[idx].compound = e.target.value;
+                            setComponents(newC);
+                          }}
+                        />
+                      </div>
+                      <div>
+                        {calcMode === 'battery' ? (
+                          <>
+                            <label
+                              className="label help-cursor"
+                              data-tooltip="Mass per unit area. Example: A 10 mm diameter round pellet (area ≈ 0.79 cm²) weighing 100 mg has a density of 100 mg ÷ 0.79 cm² ≈ 127.3 mg/cm²."
+                              style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                            >
+                              Area Density (mg/cm²) <Info size={12} />
+                            </label>
+                            <input
+                              type="number"
+                              value={c.area_density}
+                              onChange={e => {
+                                const newC = [...components];
+                                newC[idx].area_density = parseFloat(e.target.value);
+                                setComponents(newC);
+                              }}
+                            />
+                          </>
+                        ) : (
+                          <>
+                            <label
+                              className="label help-cursor"
+                              data-tooltip="Total mass of this component in mg."
+                              style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                            >
+                              Mass (mg) <Info size={12} />
+                            </label>
+                            <input
+                              type="number"
+                              value={c.mass}
+                              onChange={e => {
+                                const newC = [...components];
+                                newC[idx].mass = parseFloat(e.target.value);
+                                setComponents(newC);
+                              }}
+                            />
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <button className="danger icon-btn" onClick={() => removeComponent(c.id)} style={{ alignSelf: 'flex-start', marginTop: '1.8rem' }}>
+                      <Trash2 size={16} />
+                    </button>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+              {components.length === 0 && <div className="empty-state">No sample compounds</div>}
+            </section>
+
 
             {/* Edges Section */}
             <section className="card highlight-card">
               <div className="section-header">
-                <Activity size={18} />
-                <h2>Measurement Edges</h2>
-                <button className="icon-btn" onClick={addEdge}><Plus size={16} /></button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Activity size={18} />
+                  <h2 style={{ margin: 0 }}>Measurement Edges</h2>
+                </div>
+                <button className="icon-btn" onClick={addEdge} title="Add Manually"><Plus size={16} /></button>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem', background: 'var(--bg-color)', padding: '8px 12px', borderRadius: '8px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Auto Add:</span>
+                <input
+                  type="number"
+                  value={autoEdgeMin === '' ? '' : autoEdgeMin}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setAutoEdgeMin(v === '' ? '' : Number(v))
+                  }}
+                  style={{ width: '60px', padding: '4px 6px' }}
+                />
+                <span style={{ fontSize: '0.85rem' }}>to</span>
+                <input
+                  type="number"
+                  value={autoEdgeMax === '' ? '' : autoEdgeMax}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setAutoEdgeMax(v === '' ? '' : Number(v))
+                  }}
+                  style={{ width: '60px', padding: '4px 6px' }}
+                />
+                <span style={{ fontSize: '0.85rem' }}>keV</span>
+                <button className="primary" onClick={handleAutoEdges} disabled={isAutoFetching} style={{ padding: '6px 12px', fontSize: '0.85rem', marginLeft: 'auto' }}>
+                  {isAutoFetching ? 'Adding...' : 'Auto'}
+                </button>
               </div>
 
               <AnimatePresence>
@@ -228,150 +422,15 @@ function App() {
                   </motion.div>
                 ))}
               </AnimatePresence>
-            </section>
-
-
-            {/* Sample & Matrices Section */}
-            <section className="card">
-              <div className="section-header">
-                <Layers size={18} />
-                <h2>Sample & Matrices</h2>
+              <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px dashed var(--border-color)' }}>
+                <button
+                  className="danger"
+                  onClick={handleClearAll}
+                  style={{ width: '100%', padding: '0.6rem', fontSize: '0.9rem', backgroundColor: 'transparent', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#ef4444', transition: 'all 0.2s' }}
+                >
+                  <Trash2 size={16} /> Clear all configurations
+                </button>
               </div>
-              <div className="grid">
-                <div>
-                  <label className="label">Compound Formula</label>
-                  <input
-                    type="text"
-                    value={sample.compound}
-                    onChange={e => setSample({ ...sample, compound: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label
-                    className="label help-cursor"
-                    data-tooltip="Mass per unit area. Example: A 10 mm diameter round pellet (area ≈ 0.79 cm²) weighing 100 mg has a density of 100 mg ÷ 0.79 cm² ≈ 127.3 mg/cm²."
-                    style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
-                  >
-                    Area Density (mg/cm²) <Info size={12} />
-                  </label>
-                  <input
-                    type="number"
-                    value={sample.area_density}
-                    onChange={e => setSample({ ...sample, area_density: parseFloat(e.target.value) })}
-                  />
-                </div>
-                <div>
-                  <label className="label">Weight Percent: {(sample.ratio * 100).toFixed(0)}% (Sample) / {((1 - sample.ratio) * 100).toFixed(0)}% (Matrix)</label>
-                  <input
-                    type="range"
-                    min="0.1" max="1.0" step="0.01"
-                    value={sample.ratio}
-                    onChange={e => setSample({ ...sample, ratio: parseFloat(e.target.value) })}
-                    className="w-full"
-                  />
-                </div>
-              </div>
-              {/* Matrices Subsection */}
-              <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px dashed var(--border-color)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <Layers size={16} className="text-muted" />
-                    <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>Matrix</h3>
-                  </div>
-                  <button className="icon-btn" onClick={addMatrix} disabled={matrices.length >= 1} style={{ opacity: matrices.length >= 1 ? 0.3 : 1 }}><Plus size={16} /></button>
-                </div>
-
-                <AnimatePresence>
-                  {matrices.map((m, idx) => (
-                    <motion.div
-                      key={m.id}
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="row item-row"
-                    >
-                      <div style={{ flex: 2 }}>
-                        <label className="label">Formula</label>
-                        <input
-                          type="text"
-                          value={m.compound}
-                          onChange={e => {
-                            const newM = [...matrices];
-                            newM[idx].compound = e.target.value;
-                            setMatrices(newM);
-                          }}
-                        />
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <label className="label">Weight Percent</label>
-                        <div className="read-only-val">{(m.ratio * 100).toFixed(0)}%</div>
-                      </div>
-                      <button className="danger icon-btn" onClick={() => removeMatrix(m.id)}>
-                        <Trash2 size={16} />
-                      </button>
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
-                {matrices.length === 0 && <div className="empty-state">No matrix added</div>}
-              </div>
-            </section>
-
-            {/* Components Section */}
-            <section className="card">
-              <div className="section-header">
-                <Layers size={18} className="text-muted" />
-                <h2>Extra Components</h2>
-                <button className="icon-btn" onClick={addComponent}><Plus size={16} /></button>
-              </div>
-
-              <AnimatePresence>
-                {components.map((c, idx) => (
-                  <motion.div
-                    key={c.id}
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="row item-row"
-                  >
-                    <div style={{ flex: 1, display: 'grid', gap: '0.8rem' }}>
-                      <div>
-                        <label className="label">Formula</label>
-                        <input
-                          type="text"
-                          value={c.compound}
-                          onChange={e => {
-                            const newC = [...components];
-                            newC[idx].compound = e.target.value;
-                            setComponents(newC);
-                          }}
-                        />
-                      </div>
-                      <div>
-                        <label
-                          className="label help-cursor"
-                          data-tooltip="Mass per unit area. Example: A 10 mm diameter round pellet (area ≈ 0.79 cm²) weighing 100 mg has a density of 100 mg ÷ 0.79 cm² ≈ 127.3 mg/cm²."
-                          style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
-                        >
-                          Area Density (mg/cm²) <Info size={12} />
-                        </label>
-                        <input
-                          type="number"
-                          value={c.area_density}
-                          onChange={e => {
-                            const newC = [...components];
-                            newC[idx].area_density = parseFloat(e.target.value);
-                            setComponents(newC);
-                          }}
-                        />
-                      </div>
-                    </div>
-                    <button className="danger icon-btn" onClick={() => removeComponent(c.id)} style={{ alignSelf: 'flex-start', marginTop: '1.8rem' }}>
-                      <Trash2 size={16} />
-                    </button>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-              {components.length === 0 && <div className="empty-state">No extra components</div>}
             </section>
 
 
@@ -391,75 +450,95 @@ function App() {
               </div>
             )}
 
-            {results.map((res, idx) => (
-              <motion.div
-                key={idx}
-                className="card plot-card"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: idx * 0.1 }}
-              >
-                {res.error ? (
-                  <div className="error-msg">Error: {res.error}</div>
-                ) : (
-                  <>
-                    <div style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <Activity size={18} />
-                      <h3 style={{ margin: 0, fontSize: '1.2rem' }}>{res.element} - {res.edge} Edge ({res.edge_value?.toFixed(1)} eV)</h3>
-                    </div>
+            {results.map((res, idx) => {
+              const isEdgeJumpAlert = res.edge_jump < 0.3 || res.edge_jump > 3.5;
+              const isMaxAbsAlert = res.abs_max > 4;
+              const alertColor = '#de425b';
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
-                      <div className="stats-row" style={{ margin: 0, padding: '0.4rem 1rem', background: 'rgba(0,0,0,0.03)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                        <div className="stat" data-tooltip="The optimal edge jump is 1.0, with a recommended range of 0.3 to 3.0.">
-                          <span className="label help-cursor" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem' }}>
-                            Edge Jump <Info size={10} />
-                          </span>
-                          <span className="value" style={{ fontSize: '1.1rem' }}>{res.edge_jump?.toFixed(3)}</span>
-                        </div>
-                        <div className="stat" data-tooltip="Total absorption should ideally be kept below 4.0.">
-                          <span className="label help-cursor" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem' }}>
-                            Max Absorption <Info size={10} />
-                          </span>
-                          <span className="value" style={{ fontSize: '1.1rem' }}>{res.abs_max?.toFixed(3)}</span>
-                        </div>
+              return (
+                <motion.div
+                  key={idx}
+                  className="card plot-card"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: idx * 0.1 }}
+                >
+                  {res.error ? (
+                    <div className="error-msg">Error: {res.error}</div>
+                  ) : (
+                    <>
+                      <div style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <Activity size={18} />
+                        <h3 style={{ margin: 0, fontSize: '1.2rem' }}>{res.element} - {res.edge} Edge ({res.edge_value?.toFixed(1)} eV)</h3>
                       </div>
 
-                      {res.compound_latex && (
-                        <div className="latex-container" style={{ margin: 0, flex: 1 }}>
-                          <BlockMath>{res.compound_latex.replace(/\$\$/g, '')}</BlockMath>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+                        <div className="stats-row" style={{ margin: 0, padding: '0.4rem 1rem', background: 'rgba(0,0,0,0.03)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                          <div className="stat" data-tooltip="The optimal edge jump is 1.0, with a recommended range of 0.3 to 3.0.">
+                            <span className="label help-cursor" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: isEdgeJumpAlert ? alertColor : undefined }}>
+                              Edge Jump {isEdgeJumpAlert ? <AlertTriangle size={12} color={alertColor} /> : <Info size={10} />}
+                            </span>
+                            <span className="value" style={{ fontSize: '1.1rem', color: isEdgeJumpAlert ? alertColor : undefined }}>{res.edge_jump?.toFixed(3)}</span>
+                          </div>
+                          <div className="stat" data-tooltip="Total absorption should ideally be kept below 4.0.">
+                            <span className="label help-cursor" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: isMaxAbsAlert ? alertColor : undefined }}>
+                              Max Absorption {isMaxAbsAlert ? <AlertTriangle size={12} color={alertColor} /> : <Info size={10} />}
+                            </span>
+                            <span className="value" style={{ fontSize: '1.1rem', color: isMaxAbsAlert ? alertColor : undefined }}>{res.abs_max?.toFixed(3)}</span>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                    <div className="plot-container">
-                      <Plot
-                        data={res.plot.data}
-                        layout={{
-                          ...res.plot.layout,
-                          width: undefined, // Let it be responsive
-                          height: 450,
-                          paper_bgcolor: '#ffffff',
-                          plot_bgcolor: '#ffffff',
-                          font: { color: '#1e293b' },
-                          xaxis: { ...res.plot.layout.xaxis, gridcolor: '#e2e8f0', color: '#64748b' },
-                          yaxis: { ...res.plot.layout.yaxis, gridcolor: '#e2e8f0', color: '#64748b' },
-                          yaxis2: { ...res.plot.layout.yaxis2, gridcolor: '#e2e8f0', color: '#64748b' },
-                          legend: { ...res.plot.layout.legend, bgcolor: 'rgba(255,255,255,0.7)' }
-                        }}
-                        config={{ responsive: true }}
-                        style={{ width: '100%', height: '100%' }}
-                      />
-                    </div>
-                  </>
-                )}
-              </motion.div>
-            ))}
+
+                        {res.compound_latex && (
+                          <div className="latex-container" style={{ margin: 0, flex: 1 }}>
+                            <BlockMath>{res.compound_latex.replace(/\$\$/g, '')}</BlockMath>
+                          </div>
+                        )}
+                      </div>
+                      <div className="plot-container">
+                        <Plot
+                          data={res.plot.data}
+                          layout={{
+                            ...res.plot.layout,
+                            width: undefined, // Let it be responsive
+                            height: 450,
+                            paper_bgcolor: '#ffffff',
+                            plot_bgcolor: '#ffffff',
+                            font: { color: '#1e293b' },
+                            xaxis: { ...res.plot.layout.xaxis, gridcolor: '#e2e8f0', color: '#64748b' },
+                            yaxis: { ...res.plot.layout.yaxis, gridcolor: '#e2e8f0', color: '#64748b' },
+                            yaxis2: { ...res.plot.layout.yaxis2, gridcolor: '#e2e8f0', color: '#64748b' },
+                            legend: { ...res.plot.layout.legend, bgcolor: 'rgba(255,255,255,0.7)' }
+                          }}
+                          config={{ responsive: true, displaylogo: false }}
+                          style={{ width: '100%', height: '100%' }}
+                        />
+                      </div>
+                    </>
+                  )}
+                </motion.div>
+              );
+            })}
           </div>
         </div>
       </main>
 
       <footer className="footer">
         <div className="footer-content">
-          <span>Developed by <a href="https://juanjuanhuang-cathy.github.io/" target="_blank" rel="noopener noreferrer">Juanjuan Huang</a> with the assistance of Gemini</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span>Developed by <a href="https://dr-xas.org/" target="_blank" rel="noopener noreferrer">Dr. XAS team</a></span>
+            <div style={{ height: '14px', width: '1px', background: 'currentColor', opacity: 0.3 }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <a href="https://github.com/Dr-XAS" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', display: 'flex', opacity: 0.7, transition: 'opacity 0.2s' }} onMouseEnter={e => e.currentTarget.style.opacity = 1} onMouseLeave={e => e.currentTarget.style.opacity = 0.7} aria-label="GitHub">
+                <Github size={18} />
+              </a>
+              <a href="https://x.com/drx_xas" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', display: 'flex', opacity: 0.7, transition: 'opacity 0.2s' }} onMouseEnter={e => e.currentTarget.style.opacity = 1} onMouseLeave={e => e.currentTarget.style.opacity = 0.7} aria-label="X (Twitter)">
+                <Twitter size={18} />
+              </a>
+              <a href="mailto:dr.xas.drx@gmail.com" style={{ color: 'inherit', display: 'flex', opacity: 0.7, transition: 'opacity 0.2s' }} onMouseEnter={e => e.currentTarget.style.opacity = 1} onMouseLeave={e => e.currentTarget.style.opacity = 0.7} aria-label="Email">
+                <Mail size={18} />
+              </a>
+            </div>
+          </div>
 
           <div className="divider" />
 

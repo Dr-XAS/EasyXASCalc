@@ -2,3 +2,4 @@
 __pycache__/XASCalc_core.cpython-313.pyc
 __pycache__/XASCalc_gui.cpython-313.pyc
 .DS_Store
+backend/__pycache__/core.cpython-311.pyc
